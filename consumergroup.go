@@ -729,7 +729,16 @@ func (cg *ConsumerGroup) run() {
 
 		switch {
 		case err == nil:
-			// no error...the previous generation finished normally.
+			// no error...the previous generation finished normally. If the group
+			// closed while that generation was still draining, nextGeneration may
+			// have picked the generation-done branch. Recheck so a closed group
+			// leaves instead of joining again.
+			select {
+			case <-cg.done:
+				_ = cg.leaveGroup(memberID)
+				return
+			default:
+			}
 			continue
 
 		case errors.Is(err, ErrGroupClosed):
