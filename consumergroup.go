@@ -798,6 +798,14 @@ func (cg *ConsumerGroup) nextGeneration(memberID string) (string, error) {
 	}
 	defer conn.Close()
 
+	// The group may have closed during coordinator discovery. Do not send a
+	// JoinGroup after closure; run leaves with the member ID it already has.
+	select {
+	case <-cg.done:
+		return memberID, ErrGroupClosed
+	default:
+	}
+
 	var generationID int32
 	var groupAssignments GroupMemberAssignments
 	var assignments map[string][]int32
