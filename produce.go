@@ -94,7 +94,17 @@ type ProduceRequest struct {
 	// An optional compression algorithm to apply to the batch of records sent
 	// to the kafka broker.
 	Compression Compression
+
+	// An optional idempotent producer identity and base sequence for the
+	// batch of records. The caller owns the sequence numbers: a retry of the
+	// same records must carry the same values so the broker can discard a
+	// batch it has already appended. Requires the v2 message format.
+	Producer *BatchProducer
 }
+
+// BatchProducer is the producer id, epoch and base sequence of an idempotent
+// produce request.
+type BatchProducer = protocol.BatchProducer
 
 // ProduceResponse represents a response from a kafka broker to a produce
 // request.
@@ -156,6 +166,7 @@ func (c *Client) Produce(ctx context.Context, req *ProduceRequest) (*ProduceResp
 				RecordSet: protocol.RecordSet{
 					Attributes: attributes,
 					Records:    req.Records,
+					Producer:   req.Producer,
 				},
 			}},
 		}},

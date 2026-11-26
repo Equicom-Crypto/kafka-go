@@ -110,6 +110,22 @@ type RecordSet struct {
 	// that compose the stream, it may use type assertions to access the
 	// underlying types of each batch.
 	Records RecordReader
+
+	// Producer is the idempotent producer identity and base sequence written
+	// to the record batch. It is only used when writing, and only the v2
+	// format can carry it. When nil, the batch is written without a producer
+	// (id, epoch and base sequence all -1).
+	Producer *BatchProducer
+}
+
+// BatchProducer is the producer identity and first sequence number of a v2
+// record batch written by an idempotent producer. The broker uses them to
+// discard a batch it has already appended, and to reject one that skips a
+// sequence number.
+type BatchProducer struct {
+	ProducerID    int64
+	ProducerEpoch int16
+	BaseSequence  int32
 }
 
 // bufferedReader is an interface implemented by types like bufio.Reader, which

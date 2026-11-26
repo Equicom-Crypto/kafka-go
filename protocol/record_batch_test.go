@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/segmentio/kafka-go/compress"
 )
 
 type memoryRecord struct {
@@ -197,4 +199,67 @@ func readAll(bytes Bytes) []byte {
 		panic(err)
 	}
 	return b
+}
+
+func TestRecordSetWritesBatchProducer(t *testing.T) {
+	cases := []struct {
+		name     string
+		producer *BatchProducer
+		want     BatchProducer
+	}{
+		{name: "no producer", want: BatchProducer{ProducerID: -1, ProducerEpoch: -1, BaseSequence: -1}},
+		{name: "idempotent producer", producer: &BatchProducer{ProducerID: 4021, ProducerEpoch: 3, BaseSequence: 2147483646}, want: BatchProducer{ProducerID: 4021, ProducerEpoch: 3, BaseSequence: 2147483646}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now().Truncate(time.Millisecond)
+			records := []memoryRecord{
+				{offset: 0, time: now, key: []byte("k"), value: []byte("v-1")},
+				{offset: 1, time: now, key: []byte("k"), value: []byte("v-2")},
+			}
+			buf := newPageBuffer()
+			defer buf.unref()
+			rs := RecordSet{
+				Version:    2,
+				Attributes: Attributes(compress.Lz4),
+				Records:    NewRecordReader(makeRecords(records)...),
+				Producer:   tc.producer,
+			}
+			if _, err := rs.WriteTo(buf); err != nil {
+				t.Fatal(err)
+			}
+			var got RecordSet
+			if _, err := got.ReadFrom(buf); err != nil {
+				t.Fatal(err)
+			}
+			stream, ok := got.Records.(*RecordStream)
+			if !ok || len(stream.Records) != 1 {
+				t.Fatalf("decoded records %T, want one batch", got.Records)
+			}
+			batch, ok := stream.Records[0].(*RecordBatch)
+			if !ok {
+				t.Fatalf("decoded batch %T, want *RecordBatch", stream.Records[0])
+			}
+			if have := (BatchProducer{batch.ProducerID, batch.ProducerEpoch, batch.BaseSequence}); have != tc.want {
+				t.Fatalf("batch producer %+v, want %+v", have, tc.want)
+			}
+			if batch.Attributes.Compression() != compress.Lz4 {
+				t.Fatalf("batch compression %v, want lz4", batch.Attributes.Compression())
+			}
+			assertRecords(t, NewRecordReader(makeRecords(records)...), batch)
+		})
+	}
+}
+
+func TestRecordSetRejectsBatchProducerBeforeV2(t *testing.T) {
+	buf := newPageBuffer()
+	defer buf.unref()
+	rs := RecordSet{
+		Version:  1,
+		Records:  NewRecordReader(Record{Value: NewBytes([]byte("v"))}),
+		Producer: &BatchProducer{ProducerID: 1},
+	}
+	if _, err := rs.WriteTo(buf); err == nil {
+		t.Fatal("v1 record set with a producer was written")
+	}
 }

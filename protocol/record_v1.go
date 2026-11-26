@@ -150,6 +150,9 @@ func (rs *RecordSet) readFromVersion1(d *decoder) error {
 }
 
 func (rs *RecordSet) writeToVersion1(buffer *pageBuffer, bufferOffset int64) error {
+	if rs.Producer != nil {
+		return errors.New("an idempotent producer requires the v2 record batch format")
+	}
 	attributes := rs.Attributes
 	records := rs.Records
 

@@ -695,6 +695,13 @@ func (p *connPool) sendRequest(ctx context.Context, req Request, state connPoolS
 		}
 		brokerID = r.(*findcoordinator.Response).NodeID
 	case protocol.TransactionalMessage:
+		// A request without a transactional id (InitProducerId for an
+		// idempotent, non-transactional producer) has no coordinator and may go
+		// to any broker. Looking one up for an empty key would need DESCRIBE on
+		// the empty transactional id when the cluster has an authorizer.
+		if m.Transaction() == "" {
+			break
+		}
 		p := p.sendRequest(ctx, &findcoordinator.Request{
 			Key:     m.Transaction(),
 			KeyType: int8(CoordinatorKeyTypeTransaction),
