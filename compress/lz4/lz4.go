@@ -40,6 +40,10 @@ func (c *Codec) NewWriter(w io.Writer) io.WriteCloser {
 		z.Reset(w)
 	} else {
 		z = lz4.NewWriter(w)
+		// 64KB blocks, as the Java producer writes. The default 4MB block
+		// size costs a 4MB buffer per batch here and in the broker, which
+		// decompresses every batch to validate it.
+		_ = z.Apply(lz4.BlockSizeOption(lz4.Block64Kb))
 	}
 	return &writer{Writer: z}
 }
