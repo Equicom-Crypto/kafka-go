@@ -149,6 +149,12 @@ func TestClientInitProducerIDWithoutTransactionalID(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// The broker answers COORDINATOR_LOAD_IN_PROGRESS until it is ready.
+		if errors.Is(resp.Error, GroupLoadInProgress) && ctx.Err() == nil {
+			time.Sleep(100 * time.Millisecond)
+			i--
+			continue
+		}
 		if resp.Error != nil {
 			t.Fatal(resp.Error)
 		}
