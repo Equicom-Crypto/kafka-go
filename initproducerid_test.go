@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"net"
 	"strconv"
@@ -96,5 +97,73 @@ func TestClientInitProducerId(t *testing.T) {
 	})
 	if !errors.Is(resp.Error, InvalidTransactionTimeout) {
 		t.Fatal("Should have errored with: Transaction timeout specified is higher than `transaction.max.timeout.ms`")
+	}
+}
+
+// apiKeyConn records the api key of every request frame written to it.
+type apiKeyConn struct {
+	net.Conn
+	keys chan<- int16
+	buf  []byte
+}
+
+func (c *apiKeyConn) Write(b []byte) (int, error) {
+	c.buf = append(c.buf, b...)
+	for len(c.buf) >= 6 {
+		size := int(int32(binary.BigEndian.Uint32(c.buf[:4])))
+		if len(c.buf) < 4+size {
+			break
+		}
+		c.keys <- int16(binary.BigEndian.Uint16(c.buf[4:6]))
+		c.buf = c.buf[4+size:]
+	}
+	return c.Conn.Write(b)
+}
+
+func TestClientInitProducerIDWithoutTransactionalID(t *testing.T) {
+	if !ktesting.KafkaIsAtLeast("0.11.0") {
+		return
+	}
+	keys := make(chan int16, 1024)
+	dialer := &net.Dialer{}
+	client := &Client{
+		Addr:    TCP("localhost"),
+		Timeout: 5 * time.Second,
+		Transport: &Transport{
+			Dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				c, err := dialer.DialContext(ctx, network, addr)
+				if err != nil {
+					return nil, err
+				}
+				return &apiKeyConn{Conn: c, keys: keys}, nil
+			},
+		},
+	}
+	defer client.Transport.(*Transport).CloseIdleConnections()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var pids []int
+	for i := 0; i < 2; i++ {
+		resp, err := client.InitProducerID(ctx, &InitProducerIDRequest{ProducerID: -1, ProducerEpoch: -1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp.Error != nil {
+			t.Fatal(resp.Error)
+		}
+		if resp.Producer.ProducerID < 0 || resp.Producer.ProducerEpoch != 0 {
+			t.Fatalf("unexpected producer identity %+v", *resp.Producer)
+		}
+		pids = append(pids, resp.Producer.ProducerID)
+	}
+	if pids[0] == pids[1] {
+		t.Fatalf("expected a new producer id per initialization, got %d twice", pids[0])
+	}
+	close(keys)
+	for key := range keys {
+		if key == int16(10) { // FindCoordinator
+			t.Fatal("InitProducerId without a transactional id looked up a transaction coordinator")
+		}
 	}
 }
